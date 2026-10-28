@@ -1,4 +1,28 @@
-# Whiteboard Studio 1.9.2
+# Whiteboard Studio 2.2.2
+
+**2.2.2:** bỏ ô Tìm model; giữ chọn nhóm và danh sách model. Đăng nhập khi phiên Puter còn hợp lệ chỉ làm mới thông tin. EXE giữ hồ sơ Chrome riêng trên máy để tái sử dụng phiên đăng nhập; không thể tắt mã xác minh bắt buộc của Puter/Google hay ép Google qua SDK. Xem PUTER-HUONG-DAN.md.
+
+
+**2.2.2:** nút **Mô hình AI** nằm ngay trên **Quản lý / tải giọng**. Bấm để mở hộp thoại chọn chế độ, tài khoản và model; bấm Xong để lưu. Tab Kịch bản không còn phần thiết lập AI dài. Lựa chọn vẫn lưu theo từng dự án.
+
+
+**Bản 2.2.2 — Puter:** mặc định Trên máy, không tải SDK hoặc yêu cầu đăng nhập. Chọn AI qua Puter, chọn nhóm Gemini/GPT/AI khác, bấm Đăng nhập Puter và chọn model. Khi bấm xử lý, ưu tiên model đã chọn; lỗi chuyển Agnes rồi code trên máy nếu bật dự phòng. Chọn Agnes cũng có dự phòng local. Đọc **PUTER-HUONG-DAN.md** trước khi dùng; tài khoản/hạn mức Puter độc lập với gói Gemini/ChatGPT cá nhân. Luồng tích hợp được kiểm tra với SDK giả lập, chưa xác minh đăng nhập hoặc suy luận bằng tài khoản thật.
+
+
+**Bản 2.2.2:** tự nhận diện vùng bao ngoài theo hình dạng thực, gồm vùng khoanh tay. Vùng nhỏ được vẽ trước, vùng bao ngoài hoàn thiện phần còn thiếu dù đang ở đầu, giữa hay cuối danh sách. Các vùng giao nhau một phần giữ thứ tự người dùng; pixel đã vẽ không vẽ lại. Vùng trùng hoàn toàn được bỏ qua, thời gian tự chia lại, giữ tổng thời lượng cảnh. Khi thứ tự tự đổi, thời gian vùng được cân lại chỉ trên bản xuất; dữ liệu vùng gốc vẫn giữ nguyên. Không cần tự chuyển vùng toàn ảnh xuống cuối. Các mục phiên bản cũ bên dưới mô tả lịch sử.
+
+
+
+**2.2.2:** sửa lệch thời gian khi xuất nhiều vùng ngắn/khoanh tay, tối ưu xử lý nét từng vùng. Đồng bộ thời lượng: **Tự điều chỉnh** đổi nhẹ giọng rồi đổi cảnh nếu cần; **Giữ tốc độ giọng** đổi độ dài cảnh; **Giữ độ dài cảnh** đổi tốc độ giọng trong giới hạn 0,70–1,20 lần (hợp với mốc SRT). Chỉ áp dụng cho lời đọc theo cảnh. Nguồn vẫn cần build lại EXE với `npm run build:desktop`.
+
+
+**Bản 2.1:** mặc định chia cảnh/tạo prompt trên máy không cần API; thêm thư viện 25 giọng VieNeu, cài CPU/GPU và clone/lưu giọng từ âm thanh mẫu. Đọc **STUDIO-2.1-HUONG-DAN.md** cho cách dùng và giới hạn. Prompt offline dùng thuật toán/mẫu, cần duyệt nội dung; AI trực tuyến là tùy chọn. Các mục 1.x bên dưới là lịch sử.
+
+
+Tạo video vẽ tay từ kịch bản, ảnh tạo bên ngoài và lời đọc offline. Bản Windows mới chia quy trình thành 5 tab, tạo dự án chỉ bằng tên, tự lưu, có Piper/VieNeu và 5 tỷ lệ khung hình. Màu nền trơn phù hợp ảnh xuất hiện ngay từ đầu video.
+
+Đọc **STUDIO-2.0-HUONG-DAN.md** để chạy/cập nhật/build, cài VieNeu CPU/GPU và hiểu phạm vi kiểm tra. Gói ZIP này đầy đủ mã nguồn, không phải EXE đã biên dịch. Bộ VieNeu là phần tải thêm trong ứng dụng; Piper vẫn mặc định.
+
 
 Tạo video vẽ minh họa từ văn bản/SRT, ảnh tải lên và lời đọc Piper. Giao diện giữ thương hiệu Whiteboard Studio, không hiển thị nhãn thử nghiệm, phiên bản hoặc tên nhà cung cấp AI.
 

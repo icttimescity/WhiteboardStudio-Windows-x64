@@ -4,7 +4,7 @@ SRT 白板动画 - 整合渲染器（mask 编排 + stream 画法）
 
 把一张线稿图 + 同名 annotation.json 渲染成白板手绘动画：
   - 编排沿用 whiteboard-mask-animation：按 sequence/startMs 顺序逐区域揭示，
-    每个区域的可作画范围 = 矩形 region 扣除「后续区域 + protectedRegions」，
+    Each region draws only pixels not completed by earlier regions or protected.，
     未开始的区域因掩码限制不会提前露线（mask 的核心不变量）。
   - 画法换成 whiteboard-stream-animation：每个区域在自己的允许掩码内，
     沿骨架/网格笔迹连续落墨（起笔 ink → 添彩 color），笔尖跟随真实笔迹，
@@ -92,6 +92,9 @@ class RegionStreamRenderer:
         if cfg.preserve_source_background:
             self.canvas_bgr = np.array(background_rgb(image_bgr[:, :, ::-1])[::-1], dtype=np.uint8)
 
+        if annotation.get("backgroundColor"):
+            self.canvas_bgr = sr._hex_to_bgr(annotation["backgroundColor"])
+
         # 输出尺寸：长边限到 cap，对齐到 grid_edge 的偶数倍（编码要求偶数）
         h0, w0 = image_bgr.shape[:2]
         scale = cfg.cap_long_edge / max(h0, w0)
@@ -107,6 +110,10 @@ class RegionStreamRenderer:
         self.sy = self.out_h / ch
 
         self.color_img = cv2.resize(image_bgr, (self.out_w, self.out_h), interpolation=cv2.INTER_AREA)
+        if annotation.get("backgroundColor"):
+            source_bg = np.array(background_rgb(image_bgr[:, :, ::-1])[::-1], dtype=np.int16)
+            flat = np.abs(self.color_img.astype(np.int16) - source_bg).sum(axis=2) <= 12
+            self.color_img[flat] = self.canvas_bgr
         gray = cv2.cvtColor(self.color_img, cv2.COLOR_BGR2GRAY)
         if cfg.preserve_source_background and float(np.dot(self.canvas_bgr, [0.114, 0.587, 0.299])) < 128:
             gray = 255 - gray  # Light chalk strokes on a dark board are ink too.
@@ -160,8 +167,8 @@ class RegionStreamRenderer:
             self.tip.stamp(snap, px, py)
         return snap
 
-    # ── 单区域的允许掩码：矩形 - 后续区域 - protectedRegions ──
-    def _allowed_mask(self, element: dict, later_elements: list[dict]) -> np.ndarray:
+    # ── Allowed shape: polygon/rectangle minus earlier regions and protected pixels ──
+    def _allowed_mask(self, element: dict, earlier_elements: list[dict]) -> np.ndarray:
         def shape_mask(region):
             result = np.zeros((self.out_h, self.out_w), dtype=np.uint8)
             if region.get("points"):
@@ -172,8 +179,8 @@ class RegionStreamRenderer:
                 result[y0:y1, x0:x1] = 1
             return result.astype(bool)
         mask = shape_mask(element["region"])
-        for later in later_elements:
-            mask &= ~shape_mask(later["region"])
+        for earlier in earlier_elements:
+            mask &= ~shape_mask(earlier["region"])
         for prot in element.get("reveal", {}).get("protectedRegions", []):
             px0, py0, px1, py1 = _scaled_rect(prot, self.sx, self.sy, self.out_w, self.out_h)
             mask[py0:py1, px0:px1] = False
@@ -197,7 +204,12 @@ class RegionStreamRenderer:
         if not region_ink.any():
             return []
         self._report("Phân tích đường nét")
-        skel = sr._zhang_suen_skeleton(region_ink, max_iterations=160)
+        # Thin only the occupied ROI, with a clear border, rather than
+        # rescanning the entire Full HD canvas for every small freehand region.
+        ys, xs = np.nonzero(region_ink)
+        x0, x1 = max(0, int(xs.min())-1), min(self.out_w, int(xs.max())+2)
+        y0, y1 = max(0, int(ys.min())-1), min(self.out_h, int(ys.max())+2)
+        skel = sr._zhang_suen_skeleton(region_ink[y0:y1, x0:x1], max_iterations=160)
         self._report("Lần theo đường nét")
         raw = sr.trace_8connected(skel, min_points=cfg.skeleton_min_points)
         if not raw:
@@ -205,7 +217,7 @@ class RegionStreamRenderer:
         spacing = cfg.skeleton_resample_spacing
         out: list[list[tuple[int, int]]] = []
         for stroke in raw:
-            pts = [(float(x), float(y)) for x, y in stroke]
+            pts = [(float(x+x0), float(y+y0)) for x, y in stroke]
             pts = sr._resample_stroke_points(pts, spacing)
             pts = sr._chaikin_smooth(pts, iterations=1)
             pts = sr._resample_stroke_points(pts, spacing)
@@ -274,7 +286,12 @@ class RegionStreamRenderer:
         last: int | None = None
         for si in idx_for_frame:
             if last is None:
-                self._reveal_ink_segment(samples[si], samples[si], allowed)
+                self._reveal_ink_segment(samples[0], samples[0], allowed)
+                for k in range(1, si + 1):
+                    if k not in pen_lifts:
+                        self._reveal_ink_segment(samples[k - 1], samples[k], allowed)
+                    else:
+                        self._reveal_ink_segment(samples[k], samples[k], allowed)
             else:
                 for k in range(last + 1, si + 1):
                     if k in pen_lifts:
@@ -298,7 +315,8 @@ class RegionStreamRenderer:
         last: int | None = None
         for ci in idx_for_frame:
             if last is None:
-                self._color_stamp(*centers[ci], disk, allowed)
+                for k in range(ci + 1):
+                    self._color_stamp(*centers[k], disk, allowed)
             else:
                 for k in range(last + 1, ci + 1):
                     self._color_stamp(*centers[k], disk, allowed)
@@ -399,6 +417,46 @@ class RegionStreamRenderer:
     def render_to(self, raw_path: Path, total_ms: int, on_progress=None) -> Path:
         cfg = self.cfg
         elements = sorted(self.ann["elements"], key=lambda e: e["reveal"]["startMs"])
+        original = elements
+        # Determine true containment from rasterized shapes (including freehand
+        # polygons), not bounding boxes. Strict subsets go before containers.
+        masks = [self._allowed_mask(e, []) for e in elements]
+        areas = [int(m.sum()) for m in masks]
+        dependencies = [set() for _ in elements]
+        for outer in range(len(elements)):
+            for inner in range(len(elements)):
+                if 0 < areas[inner] < areas[outer] and not np.any(masks[inner] & ~masks[outer]):
+                    dependencies[outer].add(inner)
+        order = []
+        pending = set(range(len(elements)))
+        while pending:
+            ready = min(i for i in pending if not (dependencies[i] & pending))
+            order.append(ready)
+            pending.remove(ready)
+        reordered = order != list(range(len(elements)))
+        elements = [original[i] for i in order]
+        owned = np.zeros((self.out_h, self.out_w), dtype=bool)
+        plans = []
+        for index, element in zip(order, elements):
+            allowed = masks[index] & ~owned
+            if allowed.any():
+                plans.append((element, allowed))
+                owned |= allowed
+        # Fully covered regions do not get a blank animation slot. Redistribute
+        # their time over useful regions while preserving the scene duration.
+        if plans and (reordered or len(plans) != len(elements)):
+            begin = original[0]["reveal"]["startMs"]
+            end = max(e["reveal"]["startMs"]+e["reveal"]["durationMs"] for e in elements)
+            weight = sum(e["reveal"]["durationMs"] for e, _ in plans)
+            cursor = begin
+            adjusted = []
+            for i, (e, allowed) in enumerate(plans):
+                stop = end if i == len(plans)-1 else cursor+(end-begin)*e["reveal"]["durationMs"]/weight
+                adjusted.append(({**e, "reveal":{**e["reveal"],"startMs":cursor,"durationMs":stop-cursor}}, allowed))
+                cursor = stop
+            plans = adjusted
+        elements = [e for e, _ in plans]
+        del masks, owned
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(raw_path), fourcc, cfg.fps, (self.out_w, self.out_h))
         if not writer.isOpened():
@@ -428,7 +486,7 @@ class RegionStreamRenderer:
             cur_ms += n * ms_per_frame
 
         try:
-            for idx, element in enumerate(elements):
+            for idx, (element, allowed) in enumerate(plans):
                 region_number = idx + 1
                 reveal = element["reveal"]
                 start_ms = reveal["startMs"]
@@ -436,9 +494,13 @@ class RegionStreamRenderer:
                 report("Giữ khung trước khi vẽ")
                 fill_static(start_ms)
 
-                allowed = self._allowed_mask(element, elements[idx + 1:])
-                ink_frames = max(1, round(dur_ms * cfg.ink_weight / weight_sum * cfg.fps / 1000))
-                color_frames = max(1, round(dur_ms * cfg.color_weight / weight_sum * cfg.fps / 1000))
+                # Quantize absolute boundaries once. Independently rounding ink
+                # and wash per region accumulates drift and loses late regions
+                # when the composer trims the scene to its requested duration.
+                end_frame = round((start_ms + dur_ms) / ms_per_frame)
+                budget = max(0, end_frame - round(cur_ms / ms_per_frame))
+                color_frames = min(budget, max(1, round(budget * cfg.color_weight / weight_sum)))
+                ink_frames = budget - color_frames
 
                 if cfg.ink_path_mode == "skeleton":
                     strokes = self._region_skeleton_strokes(allowed)
@@ -479,7 +541,7 @@ class RegionStreamRenderer:
                 cur_ms += color_frames * ms_per_frame
 
             # 凝视：补到 total_ms，并确保结尾至少停留 0.5s 完整原图
-            gaze_until = max(total_ms, cur_ms + 500)
+            gaze_until = total_ms
             # 最终帧显示完整原图（凝视）
             # Keep completed canvas: do not reveal unannotated pixels abruptly.
             # Full-image default or an explicit background region provides coverage.
@@ -504,7 +566,12 @@ class RegionStreamRenderer:
         last: int | None = None
         for si in idx_for_frame:
             if last is None:
-                self._reveal_ink_segment(samples[si], samples[si], allowed)
+                self._reveal_ink_segment(samples[0], samples[0], allowed)
+                for k in range(1, si + 1):
+                    if k not in pen_lifts:
+                        self._reveal_ink_segment(samples[k - 1], samples[k], allowed)
+                    else:
+                        self._reveal_ink_segment(samples[k], samples[k], allowed)
             else:
                 for k in range(last + 1, si + 1):
                     if k in pen_lifts:

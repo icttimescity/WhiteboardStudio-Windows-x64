@@ -188,7 +188,7 @@ async function pump() {
         }
         p.job.status = result?.failed ? "partial" : "done";
         p.job.progress = 100;
-        p.job.message = result?.stopped
+        p.job.message = result?.notice && !result?.failed ? result.notice : result?.stopped
           ? `Đã dừng gọi API: ${result.error}. Kết quả đã lưu. Bấm thử lại phần lỗi / chưa xong khi kết nối sẵn sàng.`
           : result?.failed
           ? `Có ${result.failed} cảnh lỗi. Các cảnh thành công đã được lưu. Bấm thử lại phần lỗi.`

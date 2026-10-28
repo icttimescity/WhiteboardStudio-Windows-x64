@@ -1,0 +1,239 @@
+{
+  "version": "3.8.3",
+  "defaultVoice": "Hải Đăng",
+  "source": "https://github.com/pnnbao97/VieNeu-TTS",
+  "voices": [
+    {
+      "id": "Adam bựa",
+      "label": "Adam bựa",
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Trúc Ly",
+      "label": "Trúc Ly",
+      "description": "Nữ · Bắc · Phong cách tự nhiên",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thiện Minh",
+      "label": "Thiện Minh",
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "gender": "male",
+      "aliases": [
+        "Anh Khôi"
+      ],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Mai Anh",
+      "label": "Mai Anh",
+      "description": "Nữ · Bắc · Phong cách tin tức",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Hải Đăng",
+      "label": "Hải Đăng",
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [
+        "Minh Quân Pro",
+        "Minh Quân"
+      ],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thùy Dung",
+      "label": "Thùy Dung",
+      "description": "Nữ · Nam · Phong cách tin tức",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thiền Tâm Đức",
+      "label": "Thiền Tâm Đức",
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Ngọc Huyền",
+      "label": "Ngọc Huyền",
+      "description": "Nữ · Bắc · Giọng đọc tự nhiên",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Quang Sơn",
+      "label": "Quang Sơn",
+      "description": "Nam · Trung · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Ngọc Trân",
+      "label": "Ngọc Trân",
+      "description": "Nữ · Trung · Phong cách tự nhiên",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Minh Đức",
+      "label": "Minh Đức",
+      "description": "Nam · Bắc · Phong cách tin tức",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Phạm Tuyên",
+      "label": "Phạm Tuyên",
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thái Sơn",
+      "label": "Thái Sơn",
+      "description": "Nam · Nam · Phong cách kể chuyện",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Xuân Vĩnh",
+      "label": "Xuân Vĩnh",
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thanh Bình",
+      "label": "Thanh Bình",
+      "description": "Nam · Bắc · Phong cách kể chuyện",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Ngọc Linh",
+      "label": "Ngọc Linh",
+      "description": "Nữ · Bắc · Phong cách kể chuyện",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Đoan Trang",
+      "label": "Đoan Trang",
+      "description": "Nữ · Bắc · Phong cách tự nhiên",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Thục Đoan",
+      "label": "Thục Đoan",
+      "description": "Nữ · Nam · Phong cách kể chuyện",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Minh Triết",
+      "label": "Minh Triết",
+      "description": "Nam · Nam · Phong cách tin tức",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Mỹ Duyên",
+      "label": "Mỹ Duyên",
+      "description": "Nữ · Nam · Phong cách đọc truyện",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Quỳnh Anh",
+      "label": "Quỳnh Anh",
+      "description": "Nữ · Bắc · Phong cách đọc truyện",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Đức Trí",
+      "label": "Đức Trí",
+      "description": "Nam · Nam · Phong cách đọc truyện",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Kim Thanh",
+      "label": "Kim Thanh",
+      "description": "Nữ · Nam · Phong cách đọc truyện",
+      "gender": "female",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Adam",
+      "label": "Adam",
+      "description": "Nam · Nam · Giọng đọc tự nhiên",
+      "gender": "male",
+      "aliases": [],
+      "kind": "preset",
+      "engine": "vieneu"
+    },
+    {
+      "id": "Quốc Tuấn",
+      "label": "Quốc Tuấn",
+      "description": "Nam · Bắc · Phong cách tự nhiên",
+      "gender": "male",
+      "aliases": [
+        "Mạnh Dũng"
+      ],
+      "kind": "preset",
+      "engine": "vieneu"
+    }
+  ]
+}

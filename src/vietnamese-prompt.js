@@ -1,9 +1,11 @@
+import {formatOf} from '../public/formats.js';
 export const negativeVi = 'Nhân vật bị nhân đôi, người thừa, khuôn mặt/tóc/trang phục không nhất quán, thừa chi, hình mờ, chi tiết trang trí không liên quan.';
 export function vietnameseScenePrompt(p, profile, s, {style, characters, environment, attachments, index, workflowNote, negative}) {
  const names=items=>items.map(c=>`${c.name || c.id} [${c.id}]: ${c.appearance}`).join('\n') || 'Chưa có hồ sơ.';
  const roster=(s.cast||[]).map(c=>`${profile.characters.find(x=>x.id===c.id)?.name||c.id}: ${c.count}`).join('; ');
  const level={primary:'Tiểu học',secondary:'THCS / THPT',adult:'Người lớn'}[p.audience]||'Tiểu học';
- return `Tạo MỘT ảnh minh họa mới, tỉ lệ 16:9, cho cảnh ${index}/${p.scenes.length} của dự án “${p.title}”. Mã loạt ảnh: ${p.id}.
+ return `Tạo MỘT ảnh minh họa mới, tỉ lệ ${p.aspectRatio||"16:9"}, cho cảnh ${index}/${p.scenes.length} của dự án “${p.title}”. Mã loạt ảnh: ${p.id}.
+TỶ LỆ ƯU TIÊN: ${p.aspectRatio||"16:9"}. Nếu hồ sơ cũ có tỷ lệ khác, luôn dùng tỷ lệ ưu tiên này.
 NGÔN NGỮ: Hiểu toàn bộ mô tả bằng tiếng Việt. Nếu cần chữ trong ảnh, giữ nguyên tiếng Việt có dấu và nội dung được trích dẫn; không tự dịch sang tiếng Anh.
 MỤC TIÊU: ${p.contentMode==='explain'?'GIẢI THÍCH KIẾN THỨC':'KỂ CHUYỆN'}. Đối tượng: ${level}.
 ${p.contentMode==='explain'?'Minh họa chính xác ý trong lời kể bằng sơ đồ, quy trình, so sánh trước/sau, nguyên nhân/kết quả, cấu tạo hoặc mô hình đếm phù hợp. Bố cục theo thứ tự học, phân nhóm và mã màu rõ ràng; mũi tên phải có ý nghĩa. Giữ đúng số lượng, trình tự và quan hệ; không bịa kiến thức, phép tính, số liệu hoặc cấu tạo. Có thể lặp đồ vật để mô tả các bước hay trường hợp so sánh; không nhân đôi nhân vật. Chỉ dùng nhãn ngắn có nguyên văn trong lời kể, không thêm người dẫn chuyện nếu không cần.':'Một khoảnh khắc thống nhất, một bố cục liên tục. Minh họa hành động và cảm xúc đúng lời kể. Mỗi nhân vật riêng lẻ xuất hiện đúng một lần; không nhân bản khuôn mặt/cơ thể, chia khung truyện, ghép nhiều thời điểm, phản chiếu lặp nhân vật hoặc thêm người để lấp chỗ trống. Không thêm chữ vào ảnh.'}

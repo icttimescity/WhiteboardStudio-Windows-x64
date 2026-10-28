@@ -80,14 +80,14 @@ def subtitle_overlay(text,w,h):
     from PIL import Image,ImageDraw,ImageFont
     import numpy as np
     im=Image.new('RGBA',(w,h),(0,0,0,0));d=ImageDraw.Draw(im)
-    font=ImageFont.truetype(font_path(),max(14,int(h*.035)))
+    font=ImageFont.truetype(font_path(),max(14,int(min(w,h)*.04)))
     words=text.split();lines=[];line=''
     for word in words:
         proposed=(line+' '+word).strip()
         if d.textlength(proposed,font=font)>w*.88 and line: lines.append(line);line=word
         else: line=proposed
     if line: lines.append(line)
-    line_h=int(h*.052);top=h-int(h*.045)-line_h*len(lines)
+    line_h=max(22,int(min(w,h)*.06));top=h-int(h*.045)-line_h*len(lines)
     for i,line in enumerate(lines):
         box=d.textbbox((0,0),line,font=font);tw=d.textlength(line,font=font);x=(w-tw)/2;y=top+i*line_h
         d.rounded_rectangle((x-12,y-5,x+tw+12,y+line_h-1),radius=7,fill=(18,25,34,205))
@@ -129,11 +129,11 @@ def render(manifest):
     w,h,fps=m['width'],m['height'],m['fps'];scenes=p['scenes'];parts=[]
     frame_counts=[max(1,round(s['durationMs']*fps/1000)) for s in scenes];before=0
     for i,s in enumerate(scenes):
-        cfg=sr.Config(fps=fps,cap_long_edge=w,grid_edge=10,target_hand_height=round(h*.46),ink_path_mode=m['mode'],match_bg=False,preserve_source_background=True)
+        cfg=sr.Config(fps=fps,cap_long_edge=max(w,h),grid_edge=10,target_hand_height=round(h*.46),ink_path_mode=m['mode'],match_bg=False,preserve_source_background=True)
         # All output sizes are multiples of 10; keep the original grid density.
         image=sr._imread_any(str(base/s['image']))
         if image is None: raise ValueError('Không đọc được ảnh cảnh.')
-        ann=s['annotation'];part=work/f'scene-{i}.mp4'
+        ann=dict(s['annotation']);ann['backgroundColor']=s.get('backgroundColor') if s.get('backgroundMode')=='manual' else s.get('detectedBackground');part=work/f'scene-{i}.mp4'
         with SceneProgress(i,len(scenes),s['title'],frame_counts[i],before,sum(frame_counts)) as reporter:
             r=RegionStreamRenderer(image,ann,cfg,ROOT/'vendor/whiteboard/assets/drawing-hand.png',not m['hand'])
             r.render_to(part,s['durationMs'],on_progress=reporter.update)
@@ -197,5 +197,13 @@ if __name__=='__main__':
         print(json.dumps({'python':sys.version.split()[0],'opencv':cv2.__version__,'ffmpeg':True,'font':True}))
     elif action=='normalize':normalize(sys.argv[2],sys.argv[3])
     elif action=='audio':ff(['-i',sys.argv[2],'-vn','-t','600','-c:a','aac','-ar','48000',sys.argv[3]])
+    elif action=='tempo':ff(['-i',sys.argv[2],'-af','atempo='+str(float(sys.argv[4])),'-c:a','pcm_s16le','-ar','48000',sys.argv[3]])
+    elif action=='voice-reference':
+        import wave,numpy as np
+        start=float(sys.argv[4]);ff(['-ss',str(start),'-i',sys.argv[2],'-t','8','-ac','1','-ar','48000','-c:a','pcm_s16le',sys.argv[3]])
+        with wave.open(sys.argv[3],'rb') as sample:
+            duration=sample.getnframes()/sample.getframerate();audio=np.frombuffer(sample.readframes(sample.getnframes()),dtype='<i2').astype(float)
+        if duration<3:raise ValueError('Mẫu cần ít nhất 3 giây lời nói. Chọn mốc sớm hơn hoặc tệp khác.')
+        if not len(audio) or np.sqrt(np.mean(audio*audio))<25:raise ValueError('Mẫu quá nhỏ hoặc im lặng. Hãy dùng đoạn lời nói rõ.')
     elif action=='render':render(sys.argv[2])
     else:raise ValueError('Unknown operation')

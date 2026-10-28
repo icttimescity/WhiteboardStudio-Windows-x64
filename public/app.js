@@ -1,3 +1,6 @@
+import {initPuterAI} from './puter-ai.js';
+import {initVieneuLibrary} from './vieneu-library.js';
+import {formatOf,canvasOf} from './formats.js';
 import {polygonRegion,transformRegion,insideRegion} from './region-shape.js';
 import {initExternalImages} from "./external-images.js";
 import {initVoiceLibrary} from "./voice-library.js";
@@ -18,6 +21,8 @@ const $ = (id) => document.getElementById(id),
           "'": "&#39;",
         })[c],
     );
+const W=()=>canvasOf(p).width,H=()=>canvasOf(p).height;
+let currentTab="script",editVersion=0,autosaveTimer,savePending=null,scriptTimer,scriptDirty=false,scriptPending=null,vieneu={voices:[],backends:{}};
 let p = null,
   selected = 0,
   region = 0,
@@ -60,10 +65,11 @@ const dockObserver=new ResizeObserver(entries=>{
 });
 dockObserver.observe($('actionDock'));
 function changed() {
-  dirty = true;
-  $("dirty").textContent =
-    "Có thay đổi chưa lưu. Lưu trước khi chuyển cảnh hoặc tạo video.";
+  dirty = true;editVersion++;
+  $("dirty").textContent="Đang chờ tự lưu…";$("saveState").textContent="Đang chờ lưu…";
+  clearTimeout(autosaveTimer);autosaveTimer=setTimeout(()=>save().catch(e=>{$("saveState").textContent="Chưa lưu — thử lại";toast(e.message,true);}),700);
 }
+
 function s() {
   return p?.scenes[selected];
 }
@@ -102,6 +108,8 @@ async function guard(fn) {
   }
 }
 async function load(id) {
+  await flushScript();
+  if(dirty)await save();
   p = await api(`/api/projects/${id}`);
   selected = 0;
   region = 0;
@@ -110,25 +118,30 @@ async function load(id) {
   $("welcome").hidden = true;
   $("workspace").hidden = false;
   $("heading").textContent = p.title;
+  hydrateScript();
   renderProject();
+  hydrateExport();
+  showTab(readTab(p.id));
   await refreshList();
-  await voiceLibrary.refresh();
+  await Promise.allSettled([voiceLibrary.refresh(),refreshVieneu()]);
 }
 function renderProject() {
-  $("contentMode").value = p.contentMode || "story";
-  $("audience").value = p.audience || "primary";
-  selected = Math.min(selected, p.scenes.length - 1);
+  $("contentMode").value = p.scriptDraft?.contentMode || p.contentMode || "story";
+  $("audience").value = p.scriptDraft?.audience || p.audience || "primary";
+  selected = Math.max(0,Math.min(selected, p.scenes.length - 1));
   $("sceneCount").value = p.sceneCount || p.scenes.length;
-  const duration = p.cues.at(-1).endMs / 1000;
+  const duration = (p.cues.at(-1)?.endMs||0) / 1000;
   $("summary").textContent =
-    `${p.scenes.length} cảnh · ${duration.toFixed(1)} giây · ${p.kind === "srt" ? (p.srtTiming === "scale" ? "Mốc SRT đã co/giãn" : "Mốc thời gian từ SRT") : "Thời gian ước tính từ văn bản"}`;
+    `${p.scenes.length} cảnh · ${duration.toFixed(1)} giây · ${p.sceneTimingEdited ? "Thời lượng đã chỉnh theo cảnh" : p.kind === "srt" ? (p.srtTiming === "scale" ? "Mốc SRT đã co/giãn" : "Mốc thời gian từ SRT") : "Thời gian ước tính từ văn bản"}`;
   renderProjectVoices();
   renderScenes();
   openScene();
   renderStatus();
   renderMedia();
+  updateStages();
 }
 function taskText(sc) {
+  if(!sc)return "";
   const labels = {
     queued: "chờ",
     running: "đang xử lý",
@@ -167,16 +180,26 @@ function renderScenes() {
           guard(async () => {
             selected = +b.dataset.index;
             region = 0;
-            renderScenes();
+            $("scenes").querySelectorAll(".scene").forEach((el,i)=>el.classList.toggle("active",i===selected));
             openScene();
           })),
     );
+  $("scenes").querySelectorAll(".scene").forEach(b=>b.ondblclick=e=>{
+    if(!e.target.closest('img,.placeholder')||locked())return;
+    guard(async()=>{selected=+b.dataset.index;openScene();$("uploadImage").click();});
+  });
   $("scenes").scrollTop = scroll.top;
   $("scenes").scrollLeft = scroll.left;
 }
 function openScene() {
   tracing=null;polygonDraft=[];drag=null;
   const sc = s();
+  $("editor").hidden=!sc;$("emptyScenes").classList.toggle("hasScenes",!!sc);
+  if(!sc)return;
+  $("canvas").width=W();$("canvas").height=H();$("canvas").parentElement.style.aspectRatio=`${W()}/${H()}`;$("canvas").parentElement.style.width=`min(100%, ${Math.round(W()/H()*620)}px)`;
+  $("backgroundMode").value=sc.backgroundMode||"auto";$("backgroundColor").value=sc.backgroundColor||sc.detectedBackground||"#f6f1e3";
+  $("speechEngine").value=sc.tts?.engine==='vieneu'?'vieneu':'piper';$("speechBackend").value=sc.tts?.backend||"onnx";
+  $("sceneImagePreview").hidden=!sc.image;if(sc.image)$("sceneImagePreview").src=`/media/${p.id}/${sc.image}`;
   $("sceneTasks").textContent =
     taskText(sc) +
     (sc.visualPlan ? ` · Mục tiêu: ${sc.visualPlan.goal}` : "") +
@@ -187,6 +210,7 @@ function openScene() {
   $("sceneTitle").textContent = `Cảnh ${selected + 1}`;
   $("duration").textContent =
     `${(sc.startMs / 1000).toFixed(1)}s → ${((sc.startMs + sc.durationMs) / 1000).toFixed(1)}s`;
+  $("sceneSeconds").value = String(sc.durationMs/1000);
   $("title").value = sc.title;
   $("prompt").value = sc.prompt;
   $("imageConsistencyNote").textContent = "Dùng Prompt đầy đủ để sao chép hồ sơ nhân vật, bối cảnh và phong cách sang công cụ tạo ảnh. Tải ảnh hoàn thành vào cảnh này.";
@@ -227,7 +251,7 @@ function openScene() {
   $("annotationNote").textContent =
     sc.annotationSource === "ai"
       ? "AI đã đề xuất vùng. Hãy kiểm tra và chỉnh nếu cần."
-      : "Mặc định vẽ toàn ảnh. Bạn có thể dùng AI hoặc thêm vùng thủ công. Khi chia nhỏ, giữ một vùng toàn ảnh ở đầu để vẽ các nét nền còn lại.";
+      : "Mặc định vẽ toàn ảnh. Bạn có thể dùng AI hoặc thêm vùng thủ công. Vùng bao ngoài được tự nhận diện và vẽ sau các vùng nhỏ nằm bên trong, dù đặt trước hay sau trong danh sách. Các vùng giao nhau một phần vẫn theo thứ tự; phần đã vẽ được giữ nguyên, vùng tiếp theo chỉ bổ sung phần còn thiếu. Vùng bị phủ hết được bỏ qua khi xuất và chia lại thời gian cho vùng còn lại.";
   region = Math.min(region, Math.max(0, (draft?.elements.length || 1) - 1));
   renderRegions();
   draw();
@@ -235,9 +259,9 @@ function openScene() {
 function draw() {
   const c = $("canvas"),
     ctx = c.getContext("2d");
-  ctx.fillStyle = "#F6F1E3";
-  ctx.fillRect(0, 0, 1280, 720);
-  if (image) ctx.drawImage(image, 0, 0, 1280, 720);
+  ctx.fillStyle = s()?.backgroundMode==="manual"?$("backgroundColor").value:s()?.detectedBackground||"#F6F1E3";
+  ctx.fillRect(0, 0, W(), H());
+  if (image) ctx.drawImage(image, 0, 0, W(), H());
   if (!$("showBoxes").checked || !draft) return;
   draft.elements.forEach((e, i) => {
     const r = e.region;
@@ -303,29 +327,25 @@ function timing() {
   draw();
 }
 async function save() {
-  if (!p || !dirty) return;
+  clearTimeout(autosaveTimer);
+  if(savePending){await savePending;if(dirty)return save();return;}
+  if (!p || !dirty || !s()) return;
   if (locked()) throw Error("Chờ tác vụ hoàn tất trước khi lưu.");
-  p = await api(`/api/projects/${p.id}/scenes/${s().id}`, "PUT", {
-    title: $("title").value,
-    prompt: $("prompt").value,
-    annotation: draft,
-    narration: $("speechText").value,
-    tts: {
-      voice: $("speechVoice").value,
-      speakerId:Number($("speechSpeaker").value || 0),
-      speed: Number($("speechSpeed").value),
-      pauseMs: Number($("speechPause").value),
-      style: $("speechStyle").value,
-    },
-  });
-  dirty = false;
-  $("dirty").textContent = "Đã lưu";
-  renderScenes();
-  renderMedia();
+  const id=p.id,sid=s().id,version=editVersion;
+  const body={title:$("title").value,prompt:$("prompt").value,annotation:draft,narration:$("speechText").value,
+    backgroundMode:$("backgroundMode").value,backgroundColor:$("backgroundColor").value,
+    tts:{engine:$("speechEngine").value,backend:$("speechBackend").value,voice:$("speechVoice").value,speakerId:Number($("speechSpeaker").value||0),speed:Number($("speechSpeed").value),pauseMs:Number($("speechPause").value),style:$("speechStyle").value}};
+  $("saveState").textContent="Đang lưu…";
+  savePending=(async()=>{const next=await api(`/api/projects/${id}/scenes/${sid}`,"PUT",body);if(p?.id===id){p=next;dirty=editVersion!==version;$("dirty").textContent=dirty?"Đang lưu thay đổi mới…":"Đã tự lưu";$("saveState").textContent=dirty?"Đang chờ lưu…":"Đã lưu";renderScenes();renderMedia();updateStages();}})();
+  try{await savePending;}finally{savePending=null;}
+  if(dirty)autosaveTimer=setTimeout(()=>save().catch(e=>toast(e.message,true)),500);
 }
+
 async function job(type, options = {}) {
   await save();
-  await api(`/api/projects/${p.id}/jobs`, "POST", { type, options });
+  await flushScript();
+  const routing=['sceneplan','storyboard','check'].includes(type)?await puterAI.options():{engine:$("planningEngine").value};
+  await api(`/api/projects/${p.id}/jobs`, "POST", { type, options:{...options,...routing} });
   p = await api(`/api/projects/${p.id}`);
   renderStatus();
 }
@@ -374,11 +394,29 @@ function renderStatus() {
     "checkAI",
     "sceneplan",
     "savePurpose",
+    "applyScript",
+    "applyFormat",
     "up",
     "down",
     "removeRegion",
   ].forEach((id) => ($(id).disabled = lock));
   [
+    "aspectRatio",
+    "imageFit",
+    "imagePosition",
+    "projectEngine",
+    "projectBackend",
+    "speechEngine",
+    "speechBackend",
+    "backgroundMode",
+    "backgroundColor",
+    "planningEngine",
+    "sourceText",
+    "projectTitle",
+    "seconds",
+    "kind",
+    "srtTiming",
+    "scriptStyle",
     "regionTool",
     "projectVoice",
     "projectSpeaker",
@@ -394,6 +432,8 @@ function renderStatus() {
     "audioSource",
     "speechTiming",
     "uploadImage",
+    "sceneSeconds",
+    "applySceneSeconds",
     "audio",
     "title",
     "prompt",
@@ -405,6 +445,7 @@ function renderStatus() {
     "rw",
     "rh",
   ].forEach((id) => ($(id).disabled = lock));
+  updateStages();
 }
 function renderMedia() {
   $("audioName").textContent = p.audio
@@ -425,7 +466,7 @@ function renderMedia() {
     .filter((k) => p[k])
     .map(
       (k) =>
-        `<h3>${k === "preview" ? "Bản xem trước" : "Video Full HD"}</h3><video controls preload="metadata" src="/video/${p.id}/${k}?v=${encodeURIComponent(p[k].createdAt)}"></video><a class="button" href="/video/${p.id}/${k}?download=1">Tải ${k === "preview" ? "bản xem trước" : "video MP4"}</a>`,
+        `<h3>${k === "preview" ? "Bản xem trước" : "Video hoàn chỉnh"}</h3><video controls preload="metadata" src="/video/${p.id}/${k}?v=${encodeURIComponent(p[k].createdAt)}"></video><a class="button" href="/video/${p.id}/${k}?download=1">Tải ${k === "preview" ? "bản xem trước" : "video MP4"}</a>`,
     )
     .join("");
 }
@@ -491,6 +532,7 @@ $("textFile").onchange = async (e) => {
     $("kind").value = /\.(srt|vtt)$/i.test(file.name) || looksLikeSubtitle($("sourceText").value) ? "srt" : "text";
     $("srtTiming").value = "original";
     syncSourceDuration();
+    scriptChanged();
   }
 };
 function syncSourceDuration() {
@@ -530,6 +572,8 @@ $("seconds").oninput = () => {
 [
   "title",
   "prompt",
+  "backgroundMode",
+  "backgroundColor",
   "speechText",
   "speechVoice",
   "speechSpeed",
@@ -541,13 +585,14 @@ action("save", async () => {
   await save();
   toast("Đã lưu");
 });
-action("checkAI", () => job("check"));
+action("checkAI", async () => {await job("check");$("aiDialog").close();});
 action("storyboard", () => job("storyboard"));
 action("storyboardScene", () => job("storyboard", { sceneId: s().id }));
 action("speech", () => job("speech", { sceneId: s().id }));
 action("applyVoice", async () => {
   await save();
   const tts = {
+    engine:$("speechEngine").value,backend:$("speechBackend").value,
     voice: $("speechVoice").value,
       speakerId:Number($("speechSpeaker").value || 0),
     speed: Number($("speechSpeed").value),
@@ -652,7 +697,7 @@ for (const id of ["rLabel", "rStart", "rDuration", "rx", "ry", "rw", "rh"])
     e.reveal.startMs = Math.round(+$("rStart").value);
     e.reveal.durationMs = Math.round(+$("rDuration").value);
     const target={};["x","y","width","height"].forEach((k,i)=>target[k]=Math.round(+$(["rx","ry","rw","rh"][i]).value));
-    if(e.region.points && (target.width<=0||target.height<=0||target.x<0||target.y<0||target.x+target.width>1280||target.y+target.height>720))return;
+    if(e.region.points && (target.width<=0||target.height<=0||target.x<0||target.y<0||target.x+target.width>W()||target.y+target.height>H()))return;
     e.region=transformRegion(e.region,target);
     changed();
     draw();
@@ -661,8 +706,8 @@ $("showBoxes").onchange = draw;
 function point(e) {
   const r = $("canvas").getBoundingClientRect();
   return {
-    x: ((e.clientX - r.left) * 1280) / r.width,
-    y: ((e.clientY - r.top) * 720) / r.height,
+    x: ((e.clientX - r.left) * W()) / r.width,
+    y: ((e.clientY - r.top) * H()) / r.height,
   };
 }
 $("canvas").onpointerdown = (e) => {
@@ -706,24 +751,24 @@ $("canvas").onpointermove = (e) => {
     r = draft.elements[region].region,
     o = drag.original;
   if (drag.resize) {
-    r.width = Math.max(20, Math.min(1280 - r.x, o.width + dx));
-    r.height = Math.max(20, Math.min(720 - r.y, o.height + dy));
+    r.width = Math.max(20, Math.min(W() - r.x, o.width + dx));
+    r.height = Math.max(20, Math.min(H() - r.y, o.height + dy));
   } else {
-    r.x = Math.max(0, Math.min(1280 - r.width, o.x + dx));
-    r.y = Math.max(0, Math.min(720 - r.height, o.y + dy));
+    r.x = Math.max(0, Math.min(W() - r.width, o.x + dx));
+    r.y = Math.max(0, Math.min(H() - r.height, o.y + dy));
   }
   if(o.points)draft.elements[region].region=transformRegion(o,{x:r.x,y:r.y,width:r.width,height:r.height});
   changed();
   renderRegions();
   draw();
 };
-function boundedPoint(e){const p=point(e);return {x:Math.round(Math.max(0,Math.min(1280,p.x))),y:Math.round(Math.max(0,Math.min(720,p.y)))};}
+function boundedPoint(e){const p=point(e);return {x:Math.round(Math.max(0,Math.min(W(),p.x))),y:Math.round(Math.max(0,Math.min(H(),p.y)))};}
 function finishShape(points){
  if(!draft||locked())return;
  if(draft.elements.length>=20)throw Error('Tối đa 20 vùng.');
  const list=points.filter((p,i)=>!i||p.x!==points[i-1].x||p.y!==points[i-1].y);
  const sampled=list.length>256?list.filter((_,i)=>i%Math.ceil(list.length/256)===0):list;
- const shape=polygonRegion(sampled);
+ const shape=polygonRegion(sampled,canvasOf(p));
  draft.elements.push({id:crypto.randomUUID(),label:'Vùng tự do',subtitle:'',region:shape,reveal:{startMs:0,durationMs:100,protectedRegions:[]}});
  region=draft.elements.length-1;timing();
 }
@@ -736,7 +781,7 @@ $("regionTool").onchange=()=>{tracing=null;polygonDraft=[];drag=null;$("showBoxe
 action("finishPolygon",()=>{finishShape(polygonDraft);polygonDraft=[];draw();});
 action("cancelShape",()=>{tracing=null;polygonDraft=[];drag=null;draw();});
 window.addEventListener("beforeunload", (e) => {
-  if (dirty) {
+  if (dirty || scriptDirty) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -764,7 +809,7 @@ setInterval(async () => {
       p.job = next.job;
       if (!dirty) {
         p.scenes = next.scenes;
-        selected = Math.min(selected, p.scenes.length - 1);
+        selected = Math.max(0,Math.min(selected, p.scenes.length - 1));
         renderScenes();
         $("sceneTasks").textContent = taskText(s());
       }
@@ -795,7 +840,7 @@ function subtitleLink() {
     $("srtDownload").href =
       `/api/projects/${p.id}/subtitles?audioSource=${$("audioSource").value}&timing=${$("speechTiming").value}`;
 }
-$("audioSource").onchange = subtitleLink;
+$("audioSource").onchange = () => {subtitleLink();syncNote();};
 $("speechTiming").onchange = () => {
   subtitleLink();
   syncNote();
@@ -805,11 +850,18 @@ api("/api/tts")
     $("ttsHealth").textContent = x.ready
       ? "Piper đã sẵn sàng • Thư viện đa ngôn ngữ • Chạy offline trên CPU"
       : x.message ||
-        "Chưa có giọng. Mở Quản lý / tải giọng để tải giọng cần dùng.";
+        "Mở Quản lý / tải giọng để tải giọng cần dùng.";
   })
   .catch(() => {});
 
 function syncNote() {
+  const descriptions={
+    fit:'Tự điều chỉnh (đề xuất): đổi nhẹ tốc độ giọng trong khoảng 0,85–1,10 lần. Nếu vẫn chưa khớp, kéo dài hoặc rút ngắn cảnh theo lời đọc. Tổng thời lượng video có thể thay đổi.',
+    voice:'Giữ tốc độ giọng: giữ nguyên tốc độ của file lời đọc đã tạo. Mỗi cảnh dài bằng lời đọc cộng 0,5 giây nghỉ cuối; tổng thời lượng video có thể thay đổi.',
+    fixed:'Giữ độ dài cảnh: giữ nguyên thời gian đã đặt (kể cả mốc SRT), đổi tốc độ giọng để vừa cảnh và chừa 0,5 giây nghỉ cuối. Chỉ cho phép tốc độ 0,70–1,20 lần; nếu lệch nhiều hơn sẽ báo để bạn chỉnh lại, không tự cắt lời đọc.'
+  };
+  $("timingHelp").textContent=$("audioSource").value==='tts'?descriptions[$("speechTiming").value]:'Lựa chọn này chỉ dùng cho lời đọc tạo theo từng cảnh. File âm thanh tải lên được phát từ đầu video, cắt phần dư hoặc thêm im lặng nếu thiếu.';
+  $("speechTiming").disabled=$("audioSource").value!=='tts';
   if (!p || !s()?.speech) {
     $("syncNote").textContent = "";
     return;
@@ -864,6 +916,11 @@ action("replanConfirm", async () => {
 
 let voiceCatalog=JSON.parse($("voiceCatalog").textContent);
 function renderSpeechVoices(current=$("speechVoice").value){
+ const vi=$("speechEngine").value==='vieneu';$("ttsHealth").hidden=vi;for(const id of ['speechLanguage','speechVoiceSearch'])$(id).closest('label').hidden=vi;$("speechBackend").closest('label').hidden=!vi;
+ if($("speechEngine").value==='vieneu'){
+  const list=vieneu.voices||[];$("speechVoice").innerHTML=(list.length?list:[{id:'Minh Quân Pro',label:'Minh Quân Pro — cài VieNeu để dùng'}]).map(v=>`<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
+  if(list.some(v=>v.id===current))$("speechVoice").value=current;else if(list.some(v=>v.id===vieneu.defaultVoice))$("speechVoice").value=vieneu.defaultVoice;return;
+ }
  const filtered=filterVoices(voiceCatalog,{query:$("speechVoiceSearch").value,language:$("speechLanguage").value});
  const selectedVoice=voiceCatalog.find(v=>v.id===current);
  const list=selectedVoice&&!filtered.some(v=>v.id===current)?[selectedVoice,...filtered]:filtered;
@@ -875,7 +932,7 @@ function syncSpeaker(value=0){const voice=voiceCatalog.find(v=>v.id===$("speechV
 $("speechLanguage").onchange=()=>renderSpeechVoices();
 $("speechVoiceSearch").oninput=()=>renderSpeechVoices();
 $("speechVoice").onchange=()=>{syncSpeaker();changed();};
-const voiceLibrary=initVoiceLibrary({api,toast,getProject:()=>p,locked,onSelect:id=>{$("speechLanguage").value='';$("speechVoiceSearch").value='';renderSpeechVoices(id);syncSpeaker();changed();},onCatalog:list=>{voiceCatalog=list;renderProjectVoices();const before=$("speechLanguage").value;$("speechLanguage").innerHTML='<option value="">Tất cả ngôn ngữ</option>'+[...new Map(list.map(v=>[v.language,v.languageName]))].sort((a,b)=>a[1].localeCompare(b[1],'vi')).map(([code,name])=>`<option value="${esc(code)}">${esc(name)}</option>`).join('');$("speechLanguage").value=before;}});
+const voiceLibrary=initVoiceLibrary({api,toast,getProject:()=>p,locked,onSelect:id=>{$("speechEngine").value='piper';$("speechLanguage").value='';$("speechVoiceSearch").value='';renderSpeechVoices(id);syncSpeaker();changed();},onCatalog:list=>{voiceCatalog=list;renderProjectVoices();const before=$("speechLanguage").value;$("speechLanguage").innerHTML='<option value="">Tất cả ngôn ngữ</option>'+[...new Map(list.map(v=>[v.language,v.languageName]))].sort((a,b)=>a[1].localeCompare(b[1],'vi')).map(([code,name])=>`<option value="${esc(code)}">${esc(name)}</option>`).join('');$("speechLanguage").value=before;}});
 // Populate language choices immediately without fetching or starting downloads.
 $("speechLanguage").innerHTML+=[...new Map(voiceCatalog.map(v=>[v.language,v.languageName]))].sort((a,b)=>a[1].localeCompare(b[1],'vi')).map(([code,name])=>`<option value="${esc(code)}">${esc(name)}</option>`).join('');
 
@@ -896,8 +953,9 @@ initExternalImages({api,toast,getProject:()=>p,getScene:s,setProject:next=>{p=ne
 
 function renderProjectVoices(){
  const select=$("projectVoice"), prior=select.value;
- const list=voiceCatalog.filter(v=>v.installed).sort((a,b)=>a.languageName.localeCompare(b.languageName,'vi')||a.label.localeCompare(b.label,'vi'));
+ const list=($("projectEngine").value==="vieneu"?(vieneu.installed&&vieneu.backends?.[$("projectBackend").value]?(vieneu.voices||[]):[]).map(v=>({...v,languageName:"Tiếng Việt",installed:true})):voiceCatalog).filter(v=>v.installed).sort((a,b)=>a.languageName.localeCompare(b.languageName,'vi')||a.label.localeCompare(b.label,'vi'));
  const projectChanged=select.dataset.project!==p?.id;
+ if(projectChanged){$("projectEngine").value=p?.projectVoice?.engine||"piper";$("projectBackend").value=p?.projectVoice?.backend||"onnx";}
  const desired=(projectChanged||!prior)?(p?.projectVoice?.voice||p?.scenes[0]?.tts?.voice):prior;
  const groups=new Map();for(const v of list){if(!groups.has(v.languageName))groups.set(v.languageName,[]);groups.get(v.languageName).push(v);}
  select.innerHTML='<option value="">'+(list.length?'Chọn giọng đã tải…':'Chưa có giọng đã tải — mở Quản lý / tải giọng')+'</option>'+[...groups].map(([name,voices])=>`<optgroup label="${esc(name)}">${voices.map(v=>`<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('')}</optgroup>`).join('');
@@ -916,7 +974,100 @@ action("applyProjectVoice",async()=>{
  const voice=$("projectVoice").value,speakerId=Number($("projectSpeaker").value||0);
  if(!voice)throw Error("Hãy chọn một giọng đã tải.");
  await save();
- p=await api(`/api/projects/${p.id}/voice-settings`,"PUT",{voiceOnly:true,tts:{voice,speakerId}});
+ p=await api(`/api/projects/${p.id}/voice-settings`,"PUT",{voiceOnly:true,tts:{voice,speakerId,engine:$("projectEngine").value,backend:$("projectBackend").value}});
  renderProject();
  toast("Đã áp dụng giọng cho mọi cảnh. Có thể đổi riêng từng cảnh; bấm tạo lời đọc để cập nhật âm thanh.");
 });
+
+function showTab(tab){
+ currentTab=['script','images','voices','drawing','export'].includes(tab)?tab:'script';
+ document.querySelectorAll('[data-stage],[data-stages]').forEach(el=>{const values=el.dataset.stages?.split(' ')||[el.dataset.stage];el.hidden=!values.includes(currentTab);});
+ document.querySelectorAll('[data-tab]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.tab===currentTab));b.tabIndex=b.dataset.tab===currentTab?0:-1;});
+ $('stageHeading').textContent=({script:'Kịch bản',images:'Phân cảnh & hình ảnh',voices:'Lời đọc',drawing:'Hiệu ứng vẽ',export:'Xuất video'})[currentTab];
+ if(p)try{localStorage.setItem('wb-tab-'+p.id,currentTab);}catch{}updateStages();
+}
+document.querySelectorAll('[data-tab]').forEach(b=>{
+ b.onclick=()=>guard(async()=>{await flushScript();showTab(b.dataset.tab);});
+ b.onkeydown=e=>{if(['ArrowRight','ArrowLeft'].includes(e.key)){e.preventDefault();const list=[...document.querySelectorAll('[data-tab]')],i=list.indexOf(b),next=list[(i+(e.key==='ArrowRight'?1:4))%5];next.focus();next.click();}};
+});
+function updateStages(){
+ if(!p)return;const n=p.scenes.length;const local=$('planningEngine').value==='local';$('sceneplan').textContent=local?'Chia cảnh trên máy':'AI chia lại phân cảnh';$('storyboardScene').textContent=local?'Tạo lại prompt cảnh này':'AI đề xuất lại cảnh này';$('annotate').textContent=local||$('planningEngine').value==='puter'?'Tự tìm vùng nét trên máy':'AI đề xuất vùng vẽ';$('checkAI').hidden=local;
+ $('count-script').textContent=p.text?'Đã có nội dung':'Bản nháp';$('count-images').textContent=`${p.scenes.filter(s=>s.image).length}/${n} ảnh`;$('count-voices').textContent=`${p.scenes.filter(s=>s.speech&&s.tasks?.speech?.status!=='stale').length}/${n} lời đọc`;$('count-drawing').textContent=`${p.scenes.filter(s=>s.annotation).length}/${n} cảnh`;$('count-export').textContent=p.output?'Có video':'';
+ $('sceneStudio').classList.toggle('empty',!n);$('emptyScenes').classList.toggle('hasScenes',!!n);
+ for(const id of ['storyboard','speeches','sceneplan','preview','render'])if(!n)$(id).disabled=true;
+ $('exportSummary').textContent=`${formatOf(p).label} · ${formatOf(p).output.join(' × ')} px · ${n} cảnh`;
+ $('formatNote').textContent=`Khung hiện tại: ${formatOf(p).label}. ${s()?.annotationNeedsReview?'Bố cục đã đổi — kiểm tra lại vùng vẽ.':''}`;
+}
+function hydrateScript(){
+ const d=p.scriptDraft||{title:p.title,planningEngine:p.planningEngine||"local",text:p.sourceSubtitle||p.text,kind:p.kind,seconds:(p.cues.at(-1)?.endMs||60000)/1000,srtTiming:p.srtTiming,contentMode:p.contentMode,audience:p.audience,style:p.style};
+ $('planningEngine').value=d.planningEngine||p.planningEngine||'local';puterAI.hydrate(d.puterSettings||p.puterSettings);$('projectTitle').value=p.title;$('sourceText').value=d.text||'';$('kind').value=d.kind||'text';$('seconds').value=d.seconds||60;$('srtTiming').value=d.srtTiming||'original';$('scriptStyle').value=d.style||'';$('contentMode').value=d.contentMode||'story';$('audience').value=d.audience||'primary';
+ $('aspectRatio').value=p.aspectRatio||'16:9';$('imageFit').value=p.imageFit||'contain';$('imagePosition').value=p.imagePosition||'centre';scriptDirty=false;syncSourceDuration();
+}
+function scriptBody(){return {planningEngine:$('planningEngine').value,puterSettings:puterAI.settings(),title:$('projectTitle').value,text:$('sourceText').value,kind:$('kind').value,seconds:Number($('seconds').value),srtTiming:$('srtTiming').value,style:$('scriptStyle').value,contentMode:$('contentMode').value,audience:$('audience').value};}
+let scriptVersion=0;
+function scriptChanged(){scriptDirty=true;scriptVersion++;$('saveState').textContent='Đang chờ lưu…';clearTimeout(scriptTimer);scriptTimer=setTimeout(()=>flushScript().catch(e=>toast(e.message,true)),800);}
+async function flushScript(){
+ clearTimeout(scriptTimer);if(scriptPending){await scriptPending;if(scriptDirty)return flushScript();return;}
+ if(!p||!scriptDirty||locked())return;
+ const id=p.id,body=scriptBody(),version=scriptVersion;
+ scriptPending=api(`/api/projects/${id}/script`,'PUT',body).then(next=>{if(p?.id===id){p.scriptDraft=next.scriptDraft;p.title=next.title;$('heading').textContent=p.title;scriptDirty=version!==scriptVersion;$('saveState').textContent=scriptDirty?'Đang chờ lưu…':'Đã lưu';}});
+ try{await scriptPending;}finally{scriptPending=null;}if(scriptDirty)return flushScript();
+}
+for(const id of ['planningEngine','projectTitle','sourceText','kind','seconds','srtTiming','scriptStyle','contentMode','audience'])$(id).addEventListener('input',scriptChanged);
+
+action('applyScript',async()=>{
+ await save();await flushScript();
+ if(p.scenes.length&&!await confirmReplace())return;
+ p=await api(`/api/projects/${p.id}/script`,'PUT',{...scriptBody(),apply:true,confirmReplace:true});
+ hydrateScript();selected=0;renderProject();await refreshList();showTab('images');toast('Đã tạo phân cảnh. Có thể chọn tỷ lệ và đề xuất prompt.');
+});
+function confirmReplace(){return new Promise(resolve=>{const d=$('replaceScriptDialog');d.showModal();$('replaceScriptYes').onclick=()=>{d.close();resolve(true);};$('replaceScriptNo').onclick=()=>{d.close();resolve(false);};d.oncancel=()=>resolve(false);});}
+action('applyFormat',async()=>{
+ await save();const ratio=$('aspectRatio').value,fit=$('imageFit').value,position=$('imagePosition').value;
+ if(p.scenes.some(s=>s.image)&&!await confirmFormat())return;
+ localBusy=true;renderStatus();try{p=await api(`/api/projects/${p.id}/format`,'PUT',{aspectRatio:ratio,fit,position});renderProject();toast('Đã đổi khung hình. Kiểm tra lại bố cục và các vùng vẽ.');}finally{localBusy=false;renderStatus();}
+});
+function confirmFormat(){return new Promise(resolve=>{const d=$('formatDialog');d.showModal();$('formatYes').onclick=()=>{d.close();resolve(true);};$('formatNo').onclick=()=>{d.close();resolve(false);};d.oncancel=()=>resolve(false);});}
+async function refreshVieneu(){
+ vieneu=await api('/api/vieneu');$('vieneuStatus').textContent=`${vieneu.message||''} · RAM máy: ${vieneu.ramGB} GB`;
+ $('installVieneuCPU').disabled=vieneu.status==='running';$('installVieneuGPU').disabled=vieneu.status==='running'||!vieneu.hardware?.nvidia?.length;for(const id of ['projectBackend','speechBackend'])$(id).querySelector('[value="cuda"]').disabled=!vieneu.hardware?.nvidia?.length;$('cancelVieneu').disabled=vieneu.status!=='running';
+ renderProjectVoices();if(s())renderSpeechVoices($("speechVoice").value||s().tts?.voice);
+}
+action('refreshVieneu',refreshVieneu);
+for(const [id,backend] of [['installVieneuCPU','onnx'],['installVieneuGPU','cuda']])action(id,async()=>{await api('/api/vieneu/install','POST',{backend});await refreshVieneu();});
+action('cancelVieneu',async()=>{await api('/api/vieneu/cancel','POST',{});await refreshVieneu();});
+setInterval(()=>{if(currentTab==='voices'&&p)refreshVieneu().catch(()=>{});},3000);
+$('speechEngine').onchange=()=>{renderSpeechVoices();syncSpeaker();changed();};$('speechBackend').onchange=changed;
+$('projectEngine').onchange=()=>{renderProjectVoices();syncProjectSpeaker();};$('projectBackend').onchange=()=>renderProjectVoices();
+$('backgroundMode').addEventListener('change',draw);$('backgroundColor').addEventListener('input',()=>{$('backgroundMode').value='manual';draw();});
+action('speechPreview',async()=>{if(!s())return;await save();localBusy=true;renderStatus();try{const result=await api(`/api/projects/${p.id}/speech-preview`,'POST',{sceneId:s().id});$('samplePlayer').hidden=false;$('samplePlayer').src=`/media/${p.id}/${result.file}`;await $('samplePlayer').play();}finally{localBusy=false;renderStatus();}});
+
+function hydrateExport(){const e=p?.exportSettings;if(!e)return;for(const key of ['mode','audioSource','speechTiming'])if(e[key])$(key).value=e[key];$('hand').checked=e.hand!==false;$('subtitles').checked=e.subtitles===true;subtitleLink();}
+let exportTimer;
+for(const id of ['mode','audioSource','speechTiming','hand','subtitles'])$(id).addEventListener('change',()=>{
+ clearTimeout(exportTimer);const projectId=p?.id,body={mode:$('mode').value,audioSource:$('audioSource').value,speechTiming:$('speechTiming').value,hand:$('hand').checked,subtitles:$('subtitles').checked};
+ exportTimer=setTimeout(()=>{if(projectId&&!locked())api(`/api/projects/${projectId}/export-settings`,'PUT',body).then(r=>{if(p?.id===projectId)p.exportSettings=r.exportSettings;}).catch(e=>toast(e.message,true));},400);
+});
+
+function readTab(id){try{return localStorage.getItem('wb-tab-'+id)||'script';}catch{return 'script';}}
+
+$('planningEngine').addEventListener('change',updateStages);
+
+initVieneuLibrary({api,toast,getProject:()=>p,locked,onSelect:async(id,backend)=>{try{if(locked())throw Error('Chờ tác vụ hiện tại hoàn tất.');await refreshVieneu();if(!s())return;if(locked())throw Error('Chờ tác vụ hiện tại hoàn tất.');$("speechEngine").value='vieneu';$("speechBackend").value=backend;vieneu.voices ||= [];renderSpeechVoices(id);changed();toast('Đã chọn giọng VieNeu cho cảnh. Có thể áp dụng cho tất cả cảnh trong tab Lời đọc.');}catch(e){toast(e.message,true);}},onChange:refreshVieneu});
+
+action('applySceneSeconds',async()=>{
+ if(!s()||locked())return;
+ const id=s().id,seconds=Number($("sceneSeconds").value);await save();
+ p=await api(`/api/projects/${p.id}/scenes/${id}/duration`,'PUT',{durationMs:Math.round(seconds*1000)});renderProject();await refreshList();toast('Đã đổi thời lượng và cập nhật mốc các cảnh phía sau.');
+});
+
+const puterAI=initPuterAI({api,toast,changed:scriptChanged,locked});
+
+action('aiModels',()=>{
+ $('aiProjectHint').textContent=p?'Đang áp dụng cho dự án: '+p.title:'Hãy tạo hoặc mở một dự án để chọn mô hình AI.';
+ $('aiControls').disabled=!p;
+ $('aiDialog').showModal();
+});
+async function closeAI(){try{await flushScript();$('aiDialog').close();}catch(e){toast(e.message,true);}}
+$('aiClose').onclick=closeAI;
+$('aiDialog').addEventListener('cancel',e=>{e.preventDefault();void closeAI();});

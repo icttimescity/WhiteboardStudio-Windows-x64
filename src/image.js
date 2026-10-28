@@ -22,15 +22,15 @@ export async function imageBackground(buffer) {
 }
 
 // Agnes generates the image; Node normalizes it for the editor. No Python.
-export async function normalizeImage(buffer, output, { signal } = {}) {
+export async function normalizeImage(buffer, output, { signal, width=1280, height=720, fit="contain", position="centre", color } = {}) {
   if (signal?.aborted) throw Error("Đã hủy tác vụ.");
   let data;
   try {
-    const background = await imageBackground(buffer);
+    const background = color || await imageBackground(buffer);
     data = await sharp(buffer, { limitInputPixels: 40000000, failOn: "error" })
       .rotate()
       .flatten({ background })
-      .resize(1280, 720, { fit: "contain", background })
+      .resize(width, height, { fit, position, background })
       .png()
       .toBuffer();
   } catch (e) {

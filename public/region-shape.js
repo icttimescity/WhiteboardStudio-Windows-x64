@@ -1,6 +1,6 @@
 export function polygonArea(points){return Math.abs(points.reduce((n,p,i)=>{const q=points[(i+1)%points.length];return n+p.x*q.y-q.x*p.y;},0))/2;}
-export function polygonRegion(points){
- if(!Array.isArray(points)||points.length<3||points.length>256||points.some(p=>!p||!Number.isInteger(p.x)||!Number.isInteger(p.y)||p.x<0||p.y<0||p.x>1280||p.y>720)||polygonArea(points)<25)throw Error('Vùng tự do cần 3–256 điểm, diện tích ít nhất 25 px² và nằm trong ảnh.');
+export function polygonRegion(points,canvas={width:1280,height:720}){
+ if(!Array.isArray(points)||points.length<3||points.length>256||points.some(p=>!p||!Number.isInteger(p.x)||!Number.isInteger(p.y)||p.x<0||p.y<0||p.x>canvas.width||p.y>canvas.height)||polygonArea(points)<25)throw Error('Vùng tự do cần 3–256 điểm, diện tích ít nhất 25 px² và nằm trong ảnh.');
  const x=Math.min(...points.map(p=>p.x)),y=Math.min(...points.map(p=>p.y));
  return {x,y,width:Math.max(...points.map(p=>p.x))-x,height:Math.max(...points.map(p=>p.y))-y,points:points.map(p=>({x:p.x,y:p.y}))};
 }

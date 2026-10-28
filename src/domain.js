@@ -50,9 +50,9 @@ export function timedText(text, totalMs) {
     return { startMs, endMs: cur, text: t };
   });
 }
-export function fallbackAnnotation(s) {
+export function fallbackAnnotation(s, canvas = {width:1280,height:720}) {
   return {
-    canvas: { width: 1280, height: 720 },
+    canvas,
     sceneDurationMs: s.durationMs,
     elements: [
       {
@@ -61,7 +61,7 @@ export function fallbackAnnotation(s) {
         sequence: 1,
         subtitle: s.text,
         narrativeRole: "Minh họa toàn cảnh",
-        region: { x: 0, y: 0, width: 1280, height: 720 },
+        region: { x: 0, y: 0, width: canvas.width, height: canvas.height },
         reveal: {
           startMs: 100,
           durationMs: Math.max(100, s.durationMs - 600),
@@ -72,16 +72,17 @@ export function fallbackAnnotation(s) {
     ],
   };
 }
-export function validateAnnotation(a, duration) {
+export function validateAnnotation(a, duration, canvas = a?.canvas || {width:1280,height:720}) {
   if (
     !a ||
-    a.canvas?.width !== 1280 ||
-    a.canvas?.height !== 720 ||
+    a.canvas?.width !== canvas.width ||
+    a.canvas?.height !== canvas.height ||
+    !Number.isInteger(canvas.width) || !Number.isInteger(canvas.height) || canvas.width<100 || canvas.height<100 || canvas.width>4096 || canvas.height>4096 ||
     !Array.isArray(a.elements) ||
     a.elements.length < 1 ||
     a.elements.length > 20
   )
-    throw Error("Cần 1–20 vùng trên khung 1280 × 720.");
+    throw Error(`Cần 1–20 vùng trên khung ${canvas.width} × ${canvas.height}.`);
   let end = 0;
   const rect = (r) =>
     r &&
@@ -90,11 +91,11 @@ export function validateAnnotation(a, duration) {
     r.y >= 0 &&
     r.width > 0 &&
     r.height > 0 &&
-    r.x + r.width <= 1280 &&
-    r.y + r.height <= 720;
+    r.x + r.width <= canvas.width &&
+    r.y + r.height <= canvas.height;
   const elements = a.elements.map((e, i) => {
     const r = e.reveal;
-    const shape=e.region?.points!==undefined?polygonRegion(e.region.points):e.region;
+    const shape=e.region?.points!==undefined?polygonRegion(e.region.points,canvas):e.region;
     if (
       !rect(shape) ||
       !r ||
@@ -130,7 +131,7 @@ export function validateAnnotation(a, duration) {
     };
   });
   return {
-    canvas: { width: 1280, height: 720 },
+    canvas,
     sceneDurationMs: duration,
     elements,
   };

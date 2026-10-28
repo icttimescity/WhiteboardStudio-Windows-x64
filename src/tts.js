@@ -1,3 +1,4 @@
+import {withVieneuWorker,vieneuStatus} from './vieneu-runtime.js';
 import { timingForSpeech } from "../public/timing.js";
 import { narrationText } from "../public/srt-timing.js";
 import fs from "node:fs";
@@ -14,8 +15,9 @@ export const ttsPython = () =>
 export function settings(s) {
   const t = s.tts || {};
   return {
+    ...(t.engine==="vieneu"?{...(vieneuStatus().voices.find(v=>v.id===t.voice)?.kind==='clone'?{voiceRevision:vieneuStatus().voices.find(v=>v.id===t.voice)?.revision}:{}),engine:"vieneu",model:"v3turbo@3.8.3",backend:t.backend||"onnx"}:{}),
     text: narrationText(s.narration ?? s.text ?? ""),
-    voice: t.voice || voices[0].id,
+    voice: t.voice || (t.engine==="vieneu"?vieneuStatus().defaultVoice:voices[0].id),
     speed: Number(t.speed ?? 0.85),
     pauseMs: Number(t.pauseMs ?? 450),
     style: t.style || "narration",
@@ -23,11 +25,16 @@ export function settings(s) {
   };
 }
 export function validateSettings(v) {
-  if (!voices.some((x) => x.id === v.voice))
+  if(v.engine==='vieneu'){
+    if(!['onnx','cuda'].includes(v.backend)||v.model!=='v3turbo@3.8.3')throw Error('Cấu hình VieNeu không hợp lệ.');
+    const list=vieneuStatus().voices||[{id:'Minh Quân Pro'}];
+    if(!list.some(x=>x.id===v.voice||(x.aliases||[]).includes(v.voice)))throw Error('Giọng VieNeu không hợp lệ. Hãy làm mới danh sách.');
+  }
+  if (v.engine!=="vieneu" && !voices.some((x) => x.id === v.voice))
     throw Error("Giọng Piper không được hỗ trợ.");
   const voice=getVoice(v.voice);
-  if (v.speakerId !== undefined && (!Number.isInteger(v.speakerId)||v.speakerId<0||v.speakerId>=voice.numSpeakers))
-    throw Error(`Người nói phải từ 0 đến ${voice.numSpeakers-1}.`);
+  if (v.speakerId !== undefined && (!Number.isInteger(v.speakerId)||v.speakerId<0||v.speakerId>=(voice?.numSpeakers||1)))
+    throw Error(`Người nói phải từ 0 đến ${(voice?.numSpeakers||1)-1}.`);
   if (!Number.isFinite(v.speed) || v.speed < 0.7 || v.speed > 1.4)
     throw Error("Tốc độ lời đọc cần từ 0.7 đến 1.4.");
   if (!Number.isInteger(v.pauseMs) || v.pauseMs < 0 || v.pauseMs > 2000)
@@ -46,6 +53,7 @@ export const speechKey = (s) =>
 export const speechCurrent = (s) => {
   if (!s.speech?.file) return false;
   if (s.speech.key === speechKey(s)) return true;
+  if(s.tts?.engine==='vieneu')return false;
   // Existing 1.1.0 WAVs stay usable until the user explicitly edits their voice settings.
   if (s.tts?.style) return false;
   const t = s.tts || {};
@@ -62,6 +70,18 @@ export const speechCurrent = (s) => {
 };
 export async function synthesize(s, output, ctx) {
   const spec = validateSettings(settings(s));
+  if(spec.engine==='vieneu'){
+    const status=vieneuStatus();if(!status.backends?.[spec.backend])throw Error('Chưa tải/cài bộ VieNeu '+spec.backend+'. Mở tab Lời đọc để cài.');
+    const perform=async worker=>{
+      const raw=output+'.raw.wav';
+      try{
+        const info=await worker({...spec,output:raw});
+        await run(config.python,['scripts/media.py','tempo',raw,output,String(spec.speed)],{...ctx,timeout:180000});
+        return {...info,durationMs:Math.round(info.durationMs/spec.speed),key:speechKey(s),file:path.basename(output),voice:spec.voice,engine:'vieneu'};
+      }finally{fs.rmSync(raw,{force:true});fs.rmSync(raw.replace(/\.wav$/,'.part.wav'),{force:true});}
+    };
+    try{return await (ctx.vieneuWorker?perform(ctx.vieneuWorker):withVieneuWorker(ctx,perform));}catch(e){fs.rmSync(output,{force:true});throw e;}
+  }
   const manifest = output + ".json";
   fs.writeFileSync(manifest, JSON.stringify({ ...spec, output }));
   try {

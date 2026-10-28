@@ -14,13 +14,20 @@ export async function awaitParent(input=process.stdin,timeoutMs=15000){
  try {await new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('Launcher không xác nhận quản lý tiến trình. Hãy mở lại EXE.')),timeoutMs);lines.once('line',line=>line.replace(/^\uFEFF/,'').trim()==='START'?resolve():reject(Error('Sai xác nhận launcher.')));lines.once('close',()=>reject(Error('Launcher đã đóng trước khi khởi động.')));});}
  finally{clearTimeout(timer);lines.close();input.pause();}
 }
+export function desktopProfilePath({platform=process.platform,port=3000,env=process.env,home=os.homedir()}={}){
+ const p=platform==='win32'?path.win32:path;
+ const base=platform==='win32'?(env.LOCALAPPDATA||p.join(home,'AppData','Local')):(env.DATA_DIR||env.XDG_STATE_HOME||p.join(home,'.local','state'));
+ return p.join(base,'WhiteboardStudio','ChromeProfile-'+port);
+}
 export async function runDesktop({port=3000,chromePath,chromeArgsExtra=[],fetcher=fetch,spawnChild=spawn,platform=process.platform,onReady=pid=>console.log('DESKTOP_READY '+pid)}={}) {
  process.chdir(root);
  try{process.loadEnvFile(path.join(root,'.env'));}catch(e){if(e.code!=='ENOENT')throw e;}
  const chrome=chromePath||findChrome();
  await ensureFreePort(port);
  const token=process.env.DESKTOP_SHUTDOWN_TOKEN||crypto.randomBytes(32).toString('hex'),url=`http://127.0.0.1:${port}`;
- const profile=fs.mkdtempSync(path.join(os.tmpdir(),'WhiteboardStudio-Chrome-'));
+ // Keep the application's isolated login session across launches/builds.
+ const profile=desktopProfilePath({platform,port});
+ fs.mkdirSync(profile,{recursive:true,mode:0o700});
  let server,browser,serverClosed,browserClosed,stopping=false,reason;
  let finish;const ended=new Promise(resolve=>finish=resolve);
  const startupAbort=new AbortController();
@@ -53,7 +60,6 @@ export async function runDesktop({port=3000,chromePath,chromeArgsExtra=[],fetche
   }
   await killOwnedTree(browser,{platform});
   if(browserClosed)await waitUntilClosed(browserClosed,1200);
-  try{fs.rmSync(profile,{recursive:true,force:true,maxRetries:3,retryDelay:150});}catch{}
   process.stdin.pause();
  }
  return {reason:reason?.type,url};

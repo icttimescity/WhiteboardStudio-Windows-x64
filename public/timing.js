@@ -18,7 +18,7 @@ export function timingForSpeech(
     rate = audioMs / (originalMs - 500);
     if (rate < 0.7 || rate > 1.2)
       throw Error(
-        "Lời đọc quá ngắn hoặc dài so với cảnh. Chọn Cân bằng tự động hoặc chỉnh tốc độ rồi tạo lại.",
+        "Lời đọc quá ngắn hoặc dài so với cảnh. Chọn Tự điều chỉnh hoặc chỉnh tốc độ giọng rồi tạo lại lời đọc.",
       );
   } else if (mode !== "voice") throw Error("Chế độ thời lượng không hợp lệ.");
   const audioDurationMs = mode === "fixed" ? originalMs - 500 : Math.ceil(audioMs / rate);

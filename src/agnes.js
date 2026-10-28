@@ -46,6 +46,7 @@ export const request = createRequester({
   },
 });
 export async function chat(prompt, ctx = {}, imageUrl) {
+  if(ctx.aiChat)return ctx.aiChat(prompt,ctx,imageUrl);
   const content = imageUrl
     ? [
         { type: "text", text: prompt },
